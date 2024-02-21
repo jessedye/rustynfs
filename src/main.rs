@@ -4,6 +4,21 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use std::io;
+use serde::{Serialize};
+
+// Define an enum to represent NFS-like requests
+enum NFSRequest {
+    Read(String),
+    Write(String, Vec<u8>),
+}
+
+// Define an enum to represent NFS-like responses
+#[derive(Serialize)] // Implement Serialize trait for NFSResponse
+enum NFSResponse {
+    Data(Vec<u8>),
+    Success,
+    Error(String),
+}
 
 // Basic NFS server struct
 struct NFSServer {
@@ -12,16 +27,22 @@ struct NFSServer {
 }
 
 impl NFSServer {
-    // Method to handle NFS read request
-    async fn handle_read_request(&self, filename: String) -> Option<Vec<u8>> {
-        let file_system = self.file_system.lock().await;
-        file_system.get(&filename).cloned()
-    }
-
-    // Method to handle NFS write request
-    async fn handle_write_request(&self, filename: String, content: Vec<u8>) {
-        let mut file_system = self.file_system.lock().await;
-        file_system.insert(filename, content);
+    // Method to handle NFS-like requests
+    async fn handle_request(&self, request: NFSRequest) -> NFSResponse {
+        match request {
+            NFSRequest::Read(filename) => {
+                let file_system = self.file_system.lock().await;
+                match file_system.get(&filename) {
+                    Some(content) => NFSResponse::Data(content.clone()),
+                    None => NFSResponse::Error(format!("File {} not found", filename)),
+                }
+            }
+            NFSRequest::Write(filename, content) => {
+                let mut file_system = self.file_system.lock().await;
+                file_system.insert(filename.clone(), content);
+                NFSResponse::Success
+            }
+        }
     }
 }
 
@@ -39,20 +60,22 @@ async fn handle_client(mut stream: TcpStream, server: Arc<NFSServer>) -> io::Res
     let parts: Vec<&str> = request.split(',').collect();
 
     // Determine the type of request and handle it accordingly
-    match parts[0] {
+    let response = match parts[0] {
         "READ" => {
             let filename = parts[1].to_string();
-            if let Some(content) = server.handle_read_request(filename).await {
-                stream.write_all(&content).await?;
-            }
+            server.handle_request(NFSRequest::Read(filename)).await
         }
         "WRITE" => {
             let filename = parts[1].to_string();
             let content = parts[2].as_bytes().to_vec();
-            server.handle_write_request(filename, content).await;
+            server.handle_request(NFSRequest::Write(filename, content)).await
         }
-        _ => {} // Handle other types of requests as needed
-    }
+        _ => NFSResponse::Error("Invalid request type".to_string()),
+    };
+
+    // Send the response back to the client
+    let response_str = serde_json::to_string(&response).unwrap();
+    stream.write_all(response_str.as_bytes()).await?;
 
     Ok(())
 }
