@@ -26,13 +26,13 @@ impl NFSServer {
 }
 
 // Function to handle NFS client connections
-async fn handle_client(stream: TcpStream, server: Arc<NFSServer>) -> io::Result<()> {
-    // Split the TCP stream into reader and writer
-    let (mut reader, mut writer) = stream.into_split();
+async fn handle_client(mut stream: TcpStream, server: Arc<NFSServer>) -> io::Result<()> {
+    // Print a debug log when a client connects
+    println!("Client connected: {:?}", stream.peer_addr());
 
     // Read the request from the client
     let mut buf = [0; 1024];
-    let n = reader.read(&mut buf).await?;
+    let n = stream.read(&mut buf).await?;
 
     // Basic parsing logic for demonstration purposes
     let request = String::from_utf8_lossy(&buf[..n]);
@@ -43,7 +43,7 @@ async fn handle_client(stream: TcpStream, server: Arc<NFSServer>) -> io::Result<
         "READ" => {
             let filename = parts[1].to_string();
             if let Some(content) = server.handle_read_request(filename).await {
-                writer.write_all(&content).await?;
+                stream.write_all(&content).await?;
             }
         }
         "WRITE" => {
@@ -59,7 +59,7 @@ async fn handle_client(stream: TcpStream, server: Arc<NFSServer>) -> io::Result<
 
 // Function to start the NFS server
 async fn start_server(addr: String, server: Arc<NFSServer>) -> io::Result<()> {
-    let listener = TcpListener::bind(addr.clone()).await?; // Clone addr
+    let listener = TcpListener::bind(format!("{}:2049", addr)).await?;
     println!("NFS server listening on {}", addr);
 
     // Accept incoming client connections and handle them asynchronously
@@ -75,21 +75,22 @@ async fn start_server(addr: String, server: Arc<NFSServer>) -> io::Result<()> {
     Ok(())
 }
 
-async fn run() -> io::Result<()> {
+// Function to run the NFS server
+async fn run_server(addr: String) -> io::Result<()> {
     // Initialize the file system with some initial data
     let file_system: HashMap<String, Vec<u8>> = HashMap::new();
     let server = Arc::new(NFSServer {
         file_system: Arc::new(Mutex::new(file_system)),
     });
 
-    // Define the address and port to listen on
-    let addr = "127.0.0.1:8080".to_string();
-
     // Start the NFS server
     start_server(addr, server).await
 }
 
+// Main function
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    run().await
+    // Define the address and port to listen on
+    let addr = "0.0.0.0".to_string(); // Listen on all available interfaces
+    run_server(addr).await
 }
